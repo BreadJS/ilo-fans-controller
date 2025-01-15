@@ -1,0 +1,7 @@
+module.exports = {
+  SSH_HOSTNAME: "192.168.3.1",
+  SSH_USERNAME: "USERNAME",
+  SSH_PASSWORD: "PASSWORD",
+  SERVICE_PORT: 80,
+  DEBUG: false
+}

@@ -1,136 +1,3 @@
-<?php
-// Require config variables
-require 'config.inc.php';
-
-function get_presets() {
-	if (!file_exists('presets.json'))  // Return default presets if the file doesn't exist
-		return [
-			[
-				'name' => 'Silent Mode',
-				'speeds' => [ 15 ],
-			],
-			[
-				'name' => 'Normal Mode',
-				'speeds' => [ 50 ],
-			],
-			[
-				'name' => 'Turbo Mode',
-				'speeds' => [ 100 ],
-			]
-		];
-	else
-		return json_decode(file_get_contents('presets.json'), true);
-}
-
-function get_fans() {
-	global $ILO_HOST, $ILO_USERNAME, $ILO_PASSWORD;  // From config.inc.php
-
-	$curl_handle = curl_init("https://$ILO_HOST/redfish/v1/chassis/1/Thermal");
-
-	curl_setopt($curl_handle, CURLOPT_USERPWD, "$ILO_USERNAME:$ILO_PASSWORD");  // Authentication (Basic)
-
-	// An attempt to speed up the request
-	// curl_setopt($curl_handle, CURLOPT_ENCODING, '');
-	// curl_setopt($curl_handle, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);
-	// curl_setopt($curl_handle, CURLOPT_POSTREDIR, CURL_REDIR_POST_ALL);
-
-	// Disable SSL verification
-	curl_setopt($curl_handle, CURLOPT_SSL_VERIFYHOST, 0);
-	curl_setopt($curl_handle, CURLOPT_SSL_VERIFYPEER, 0);
-
-	curl_setopt($curl_handle, CURLOPT_FOLLOWLOCATION, true);  // Follow redirects
-	curl_setopt($curl_handle, CURLOPT_RETURNTRANSFER, 1);  // Return the JSON data
-
-	$raw_ilo_data = curl_exec($curl_handle);
-
-	// Print errors if any
-	// echo curl_error($curl_handle);
-	// echo curl_errno($curl_handle);
-
-	curl_close($curl_handle);
-
-	if ($raw_ilo_data) {  // If the request was successful
-		$fans = [];
-		foreach (json_decode($raw_ilo_data, true)['Fans'] as $fan)
-			$fans[ $fan['FanName'] ] = $fan['CurrentReading'];
-	}
-
-	return $fans ?? [];
-}
-
-if ($_SERVER['REQUEST_METHOD'] === 'GET') {
-	$FANS = get_fans();
-
-	if (isset($_GET['api']) && $_GET['api'] == 'fans')  // Return fans in JSON format with ?api=fans
-		die(json_encode($FANS, JSON_PRETTY_PRINT));
-
-	$PRESETS = get_presets();
-
-	if (isset($_GET['api']) && $_GET['api'] == 'presets')  // Return presets in JSON format with ?api=presets
-		die(json_encode($PRESETS, JSON_PRETTY_PRINT));
-
-} else if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-	// Get POST JSON data from JS fetch()
-	$data = json_decode(file_get_contents('php://input'), true);
-
-	if (isset($data['action']))  // Check if the action key exists
-		if ($data['action'] === 'fans' || $data['action'] === 'presets')  // Check if the action is valid
-			if ($data['action'] === 'fans' && isset($data['fans'])) {  // Set fans speeds
-				$FANS = get_fans();
-
-				if (is_int($data['fans']))  // Example: "fans": 50 - set all fans to 50%
-					$data['fans'] = array_fill_keys(array_keys($FANS), $data['fans']);  // Fill the array with the same speeds
-
-				$updated = 0;
-				$connected = false;
-				$ssh_handle = null;
-				foreach ($data['fans'] as $fan => $speed) {
-					if (array_key_exists($fan, $FANS)) {  // Check if the fan name is valid
-						$fan_index = array_search($fan, array_keys($FANS));
-						if (($speed >= 10 && $speed <= 100) && $speed != $FANS[$fan]) {  // Check if the speed is valid and different from the current fan's speed
-							if (!$connected) {  // Connect to iLO (only once)
-								$ssh_handle = ssh2_connect($ILO_HOST, 22);
-								ssh2_auth_password($ssh_handle, $ILO_USERNAME, $ILO_PASSWORD);
-								$connected = true;
-							}
-
-							$stream = ssh2_exec($ssh_handle, "fan p $fan_index max " . ceil($speed / 100 * 255));
-							stream_set_blocking($stream, true);
-							stream_get_contents($stream);
-
-							$stream = ssh2_exec($ssh_handle, "fan p $fan_index min 255");
-							stream_set_blocking($stream, true);
-							stream_get_contents($stream);
-
-							$updated++;
-						}
-					} else
-						die("Invalid fan name: $fan");
-				}
-
-				// Wait until the fans are set
-				if ($updated > 0)
-					do
-						$FANS = get_fans();
-					while ($FANS !== array_merge($FANS, $data['fans']));  // Wait until the fans are updated
-
-				die(json_encode($FANS, JSON_PRETTY_PRINT));
-			} else if ($data['action'] === 'presets' && isset($data['presets'])) {  // Save presets to presets.json
-				$raw_presets = json_encode($data['presets'], JSON_PRETTY_PRINT);
-				file_put_contents('presets.json', $raw_presets);
-				die($raw_presets);
-			} else
-				die('Invalid request: missing "fans" or "presets" key.');
-		else
-			die('Invalid request: invalid "action" value.');
-	else
-		die('Invalid request: missing "action" key.');
-
-	// Catch edge cases
-	die('Invalid request.');
-}
-?>
-
 <!DOCTYPE html>
 <html x-data :class="$store.darkMode.active ? 'dark' : ''">
 	<head>
@@ -249,13 +116,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 		<main class="p-5 pb-8 sm:px-10 max-w-[40rem] mx-auto">
 			<div class="flex items-center justify-between mb-5 sm:mb-7">
 				<div x-data="{ showTooltip: false }" class="relative" @mouseover.away="showTooltip = false">
-					<a
-						href="https://<?php echo $ILO_HOST; ?>"
-						target="_blank"
-						@mouseenter="showTooltip = !showTooltip"
-					>
+					
 						<img src="./favicon.ico" alt="favicon" class="h-12 w-12 transform transition-transform duration-75 active:scale-90" draggable="false">
-					</a>
+					
 
 					<!-- Open iLO Tooltip -->
 					<p
@@ -279,7 +142,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 					</h1>
 					<div class="flex items-center justify-between">
 						<p class="text-sm font-normal self-end pb-0.5 italic dark:text-gray-250 text-gray-450 select-none">
-							by <a href="https://github.com/sponsors/alex3025" target="_blank" class="font-medium dark:hover:text-gray-150 hover:text-gray-575 select-text transition-colors duration-75">alex3025</a>
+							by <a href="https://github.com/sponsors/alex3025" target="_blank" class="font-medium dark:hover:text-gray-150 hover:text-gray-575 select-text transition-colors duration-75">alex3025</a> and <a href="https://github.com/breadjs" target="_blank" class="font-medium dark:hover:text-gray-150 hover:text-gray-575 select-text transition-colors duration-75">BreadJS</a>
 						</p>
 
 						<!-- Version -->
@@ -289,7 +152,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 									dark:focus:bg-gray-900 dark:text-gray-750 dark:hover:text-gray-650 dark:focus:text-gray-650 bg-gray-25 hover:bg-gray-50
 									focus:bg-gray-50 text-gray-450 hover:text-gray-600 focus:text-gray-600"
 						>
-							v1.0.0
+							v1.1.0
 						</a>
 					</div>
 				</div>
@@ -425,7 +288,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 				</div>
 			</div>
 
-			<div class="space-y-6 w-full mt-5">
+			<div class="space-y-6 w-full mt-5" id="fanItems">
 				<template x-for="(speed, name) in $store.fans.fans" :key="name">
 					<div class="flex flex-col sm:flex-row sm:items-center justify-between group sm:space-y-0 space-y-3" x-init="$watch('speed', (newSpeed) => $store.fans.setSpeed(name, newSpeed))">
 						<div class="w-full flex items-center space-x-3 transform-opacity duration-75">
@@ -540,8 +403,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 				});
 
 				Alpine.store('fans', {
-					fans: <?php echo json_encode($FANS); ?>,  // Get the fans from the server
-
+					fans: {},
+					async fetchFanData() {
+            try {
+							const res = await fetch('/fanData'); // Replace with your endpoint
+							if (res.ok) {
+								const fanData = await res.json();
+								this.fans = fanData;
+							} else {
+								console.error('Failed to fetch fan data.');
+							}
+            } catch (error) {
+							console.error('Error fetching fan data:', error);
+            }
+        	},
 					setSpeed(fan, rawSpeed) {
 						const speed = parseInt(rawSpeed);
 
@@ -553,15 +428,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 								this.fans[fan] = speed;
 						
 						Alpine.store('presets').detectPreset();  // FIXME: Not properly working
-					}
+					},
+					async init() {
+            await this.fetchFanData();
+        	}
 				});
 
 				Alpine.store('presets', {
 					currentPreset: null,
-					presets: <?php echo json_encode($PRESETS); ?>,  // Get the presets from the server
+					presets: [{"name":"Silent Mode","speeds":[15]},{"name":"Normal Mode","speeds":[50]},{"name":"Turbo Mode","speeds":[100]}],  // Get the presets from the server
 
 					async updatePresets() {
-						const res = await fetch('<?php echo $_SERVER['PHP_SELF']; ?>', {
+						const res = await fetch('/fans/index.php', {
 							method: 'POST',
 							body: JSON.stringify({ action: 'presets', presets: this.presets }),
 						});
@@ -649,8 +527,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 
 						const fans = Alpine.store('fans').fans;
 
-						const res = await fetch('<?php echo $_SERVER['PHP_SELF']; ?>', {
+						const res = await fetch('/setFans', {
 							method: 'POST',
+							headers: {
+								'Content-Type': 'application/json',
+							},
 							body: JSON.stringify({ action: 'fans', fans }),
 						});
 
