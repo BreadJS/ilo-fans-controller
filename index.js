@@ -33,7 +33,7 @@ console.clear();
 (async() => {
   async function getFanSpeeds() {
     try {
-      const basicAuth = Buffer.from(`${config.SSH_HOSTNAME}:${config.SSH_PASSWORD}`).toString('base64');
+      const basicAuth = Buffer.from(`${config.SSH_USERNAME}:${config.SSH_PASSWORD}`).toString('base64');
       const response = await fetch(`https://${config.SSH_HOSTNAME}/redfish/v1/chassis/1/Thermal`, {
         headers: {
           'Authorization': `Basic ${basicAuth}`,
