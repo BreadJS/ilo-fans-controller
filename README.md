@@ -28,8 +28,7 @@ As of now, the patch (and so this tool) only works for **Gen8 & Gen9 servers wit
 
 ## Why NodeJS?
 
-I rewrote this script as it took a very long to get a response back from the SSH client. I will also be adding more things like a fan curve depending on specific temperature points. This requires a backend like NodeJS
-w the story behind this tool!
+I rewrote this script as it took a very long to get a response back from the SSH client. I will also be adding more things like a fan curve depending on specific temperature points. This requires a backend like NodeJS.
 
 ---
 

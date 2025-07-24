@@ -5,6 +5,7 @@ const fetch = require('node-fetch');
 const https = require('https');
 const { Client } = require('ssh2');
 const bodyParser = require('body-parser');
+const mqtt = require('mqtt');
 
 const config = require('./config.js');
 
@@ -38,11 +39,21 @@ const defaultPresetsData = {
   ]
 };
 
+let mqttClient;
+if(config.MQTT) {
+  mqttClient = mqtt.connect(`mqtt://${config.MQTT_HOSTNAME}`,
+    {
+      username: config.MQTT_USERNAME,
+      password: config.MQTT_PASSWORD
+    }
+  );
+}
+
 console.clear();
 
 
 (async() => {
-  async function getFanSpeeds() {
+  async function getFanSpeeds(mqttPush = false) {
     try {
       const basicAuth = Buffer.from(`${config.SSH_USERNAME}:${config.SSH_PASSWORD}`).toString('base64');
       const response = await fetch(`https://${config.SSH_HOSTNAME}/redfish/v1/chassis/1/Thermal`, {
@@ -58,9 +69,35 @@ console.clear();
       }
   
       const data = await response.json();
-      
       for(let i = 0; i < data['Fans'].length; i++) {
         fanData[data['Fans'][i]['FanName']] = data['Fans'][i]['CurrentReading'];
+      }
+
+      // Publish Discovery to Home Assistant
+      if(config.MQTT) { //config.MQTT
+        for(let j = 0; j < data['Temperatures'].length; j++) {
+          let tempItem = data['Temperatures'][j];
+        
+          mqttClient.publish(
+            `homeassistant/sensor/${config.MQTT_DEVICE.identifiers[0]}_temp_${tempItem['Number']}/config`,
+            JSON.stringify({
+              name: tempItem['Name'],
+              unique_id: `${config.MQTT_DEVICE.identifiers[0]}_temp_${tempItem['Number']}_temp`,
+              state_topic: `homeassistant/sensor/temperature/${config.MQTT_DEVICE.identifiers[0]}_temp_${tempItem['Number']}/state`,
+              unit_of_measurement: "°C",
+              icon: "mdi:thermometer",
+              device_class: null,
+              device: config.MQTT_DEVICE
+            }),
+            { retain: true }
+          );
+
+          // Publish Temperature
+          publishTemp(tempItem['Number'], tempItem['ReadingCelsius']);
+        }
+        
+        // Logging
+        console.log('[MQTT] Updated all temperatures');
       }
 
       return fanData;
@@ -137,19 +174,64 @@ console.clear();
     }, 5000);  // Retry after 5 seconds
   }
 
+  // MQTT Set Fan Speed
+  function publishFanSpeed(id, speed) {
+    // Publish Speed
+    mqttClient.publish(
+      `homeassistant/sensor/fans/${config.MQTT_DEVICE.identifiers[0]}_fan_${id}/state`,
+      `${speed}`,
+      { retain: true }
+    );
+  }
+  
+  // MQTT Set Temps
+  function publishTemp(id, temp) {
+    // Publish Temp
+    mqttClient.publish(
+      `homeassistant/sensor/temperature/${config.MQTT_DEVICE.identifiers[0]}_temp_${id}/state`,
+      `${temp}`,
+      { retain: true }
+    );
+  }
+
   const conn = new Client();
 
   async function init() {
     conn.on('ready', async () => {
       console.log('[INIT] Starting initialisation...');
 
-      let getFanData = await getFanSpeeds();
+      let getFanData = await getFanSpeeds(true);
       
       let fanCommands = [];
       let i = 0;
       for(let fan in getFanData) {
         fanCommands.push(`fan p ${i} min 255`);
+
+        // Publish sensor to Home Assistant
+        if(config.MQTT) {
+          // Publish discovery
+          mqttClient.publish(
+            `homeassistant/sensor/${config.MQTT_DEVICE.identifiers[0]}_fan_${i+1}/config`,
+            JSON.stringify({
+              name: `Fan Block ${i+1} Speed`,
+              unique_id: `${config.MQTT_DEVICE.identifiers[0]}_fan_${i+1}_speed`,
+              state_topic: `homeassistant/sensor/fans/${config.MQTT_DEVICE.identifiers[0]}_fan_${i+1}/state`,
+              unit_of_measurement: "%",
+              icon: "mdi:fan",
+              device_class: null,
+              device: config.MQTT_DEVICE
+            }),
+            { retain: true }
+          );
+
+          // Publish speed
+          publishFanSpeed(i+1, getFanData[fan])
+        }
+
+        // Add +1
+        i++;
       }
+
       sendMultipleCommandsSequentially(conn, fanCommands, () => {
         console.log('[INIT] Initialisation done!');
       });
@@ -164,6 +246,24 @@ console.clear();
 
   init();
 
+  // MQTT Update Temperatures Timer
+  if(config.MQTT) {
+    setInterval(() => {
+      getFanSpeeds(true);
+    }, config.TEMP_UPDATE_INTERVAL * 1000)
+  }
+
+  // Connect to MQTT
+  if(config.MQTT) {
+    mqttClient.on('connect', () => {
+      console.log('[MQTT] Connected to MQTT broker');
+    });
+
+    mqttClient.on('error', (err) => {
+      console.error('[MQTT] Connection error:', err);
+    });
+  }
+
 
   // Returns the fan data
   app.get('/fanData', async (req, res) => {
@@ -171,6 +271,7 @@ console.clear();
     res.json(getFanData);
   });
 
+  // Get presets
   app.get('/getPresets', async (req, res) => {
     const filePath = path.join(__dirname, 'presets.json');
 
@@ -190,6 +291,7 @@ console.clear();
     }
   });
 
+  // Set presets
   app.post('/setPresets', async (req, res) => {
     const body = req.body;
 
@@ -210,6 +312,7 @@ console.clear();
     for(let fan in fans) {
       fanCommands.push(`fan p ${i} max ${((255 / 100) * fans[fan]).toFixed(0)}`);
       console.log(`[FAN] Fan ${i+1} to ${fans[fan]}%`);
+      publishFanSpeed(i+1, fans[fan]);
       i++;
     }
     

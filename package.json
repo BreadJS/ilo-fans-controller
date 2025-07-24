@@ -11,6 +11,7 @@
   "dependencies": {
     "body-parser": "^1.20.3",
     "express": "^4.21.2",
+    "mqtt": "^5.13.3",
     "node-fetch": "^2.6.7",
     "ssh2": "^1.16.0"
   }
