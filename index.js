@@ -1,5 +1,6 @@
 const express = require('express');
 const path = require('path');
+const fs = require('fs').promises;
 const fetch = require('node-fetch');
 const https = require('https');
 const { Client } = require('ssh2');
@@ -10,6 +11,7 @@ const config = require('./config.js');
 const app = express();
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(bodyParser.json());
+
 const httpsAgent = new https.Agent({
   rejectUnauthorized: false,
 });
@@ -25,6 +27,15 @@ const sshConfig = {
     hostKey: ['ssh-dss', 'ssh-rsa'],  // This specifies the allowed host key algorithms
     pubKey: ['ssh-rsa']  // This specifies the allowed public key algorithms
   },
+};
+
+const defaultPresetsData = {
+  action: "presets",
+  presets: [
+    { name: "Silent Mode", speeds: [15] },
+    { name: "Normal Mode", speeds: [50] },
+    { name: "Turbo Mode", speeds: [100] }
+  ]
 };
 
 console.clear();
@@ -158,6 +169,34 @@ console.clear();
   app.get('/fanData', async (req, res) => {
     let getFanData = await getFanSpeeds();
     res.json(getFanData);
+  });
+
+  app.get('/getPresets', async (req, res) => {
+    const filePath = path.join(__dirname, 'presets.json');
+
+    try {
+      const data = await fs.readFile(filePath, 'utf-8');
+      const json = JSON.parse(data);
+      res.json(json.presets); // ✅ send only the array
+    } catch (err) {
+      if (err.code === 'ENOENT') {
+        // File doesn't exist, create with default data
+        await fs.writeFile(filePath, JSON.stringify(defaultPresetsData, null, 2), 'utf-8');
+        res.json(defaultPresetsData.presets); // ✅ return only presets
+      } else {
+        console.error('Error reading presets file:', err);
+        res.status(500).json({ error: 'Failed to read presets file' });
+      }
+    }
+  });
+
+  app.post('/setPresets', async (req, res) => {
+    const body = req.body;
+
+    const filePath = path.join(__dirname, 'presets.json');
+    await fs.writeFile(filePath, JSON.stringify(body, null, 2), 'utf-8');
+
+    res.json(body.presets);
   });
 
   // Set new speeds

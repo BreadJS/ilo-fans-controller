@@ -431,20 +431,39 @@
 					},
 					async init() {
             await this.fetchFanData();
-        	}
+        	},
+					
 				});
 
 				Alpine.store('presets', {
 					currentPreset: null,
-					presets: [{"name":"Silent Mode","speeds":[15]},{"name":"Normal Mode","speeds":[50]},{"name":"Turbo Mode","speeds":[100]}],  // Get the presets from the server
+					presets: [
+						{"name":"Silent Mode","speeds":[15]},
+						{"name":"Normal Mode","speeds":[50]},
+						{"name":"Turbo Mode","speeds":[100]}
+					],
 
 					async updatePresets() {
-						const res = await fetch('/fans/index.php', {
+						const res = await fetch('/setPresets', {
 							method: 'POST',
+							headers: {
+								'Content-Type': 'application/json'
+							},
 							body: JSON.stringify({ action: 'presets', presets: this.presets }),
 						});
 
 						if (res.ok) {  // Get the updated presets back from the server
+							const updatedPresets = await res.json();
+							this.presets = updatedPresets;
+						}
+					},
+
+					async getPresets() {
+						const res = await fetch('/getPresets', {
+							method: 'GET'
+						});
+
+						if (res.ok) {
 							const updatedPresets = await res.json();
 							this.presets = updatedPresets;
 						}
@@ -497,7 +516,7 @@
 						}
 					},
 
-					detectPreset() {  // Try to detect and set the current preset
+					detectPreset() {  
 						const fans = Alpine.store('fans').fans;
 						const speeds = Object.values(fans);
 
@@ -510,9 +529,11 @@
 								return;
 							}
 						});
+
+						
 					},
 
-					init() { this.detectPreset(); }
+					init() { this.getPresets(); this.detectPreset(); }
 				});
 
 				Alpine.store('app', {
