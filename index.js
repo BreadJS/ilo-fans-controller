@@ -246,17 +246,16 @@ console.clear();
 
   init();
 
-  // MQTT Update Temperatures Timer
-  if(config.MQTT) {
-    setInterval(() => {
-      getFanSpeeds(true);
-    }, config.TEMP_UPDATE_INTERVAL * 1000)
-  }
 
   // Connect to MQTT
   if(config.MQTT) {
     mqttClient.on('connect', () => {
       console.log('[MQTT] Connected to MQTT broker');
+
+      // MQTT Update Temperatures Timer
+      setInterval(() => {
+        getFanSpeeds(true);
+      }, config.TEMP_UPDATE_INTERVAL * 1000)
     });
 
     mqttClient.on('error', (err) => {
